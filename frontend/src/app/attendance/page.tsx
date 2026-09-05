@@ -355,7 +355,7 @@ export default function AttendancePage() {
         <CardContent>
           <Button asChild variant="outline">
             <a
-              href="https://github.com/jyothir-369/hunar-assignment/blob/main/PROBLEM3.md"
+              href="https://github.com/jyothir-369/-hunar-assignment/blob/main/PROBLEM3.md"
               target="_blank"
               rel="noopener noreferrer"
             >

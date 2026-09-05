@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     HUNAR_WEBHOOK_URL: str = ""
     APP_NAME: str = "Hunar Voice Agents API"
     DEBUG: bool = True
+    # Shared secret for /api/admin/* endpoints (e.g. seed-demo). If unset,
+    # the admin router refuses all requests with 503.
+    ADMIN_TOKEN: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",

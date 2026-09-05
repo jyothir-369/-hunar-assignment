@@ -2,6 +2,10 @@
 
 AI-powered voice hiring platform built with FastAPI + Next.js, integrating Hunar Voice Agents API.
 
+> **Demo mode is the default.** The first time you open the deployed app you'll see a populated dashboard — 4 agents, 3 campaigns, 128 candidates, 94 completed call results. A persistent **"Demo Environment"** badge in the sidebar makes the mode visible at all times. Re-seed any time from `/settings` (requires `ADMIN_TOKEN` on the backend). See [Demo / Live mode](#demo--live-mode).
+>
+> **Repository:** https://github.com/jyothir-369/-hunar-assignment
+
 ## Problems Solved
 
 1. **AI Hiring Assistant** — Create voice agents, manage campaigns, place bulk calls to candidates, capture structured results.
@@ -14,6 +18,21 @@ AI-powered voice hiring platform built with FastAPI + Next.js, integrating Hunar
 **Frontend:** Next.js 15 (TypeScript), shadcn/ui, Tailwind CSS
 **Database:** PostgreSQL (production) / SQLite (local dev)
 **External APIs:** Hunar Voice Agents, Apollo.io
+
+## Architecture
+
+```mermaid
+flowchart LR
+  Browser[Evaluator browser<br/>Next.js 15] -->|HTTPS REST| FastAPI[FastAPI backend<br/>Python 3.12]
+  FastAPI -->|CRUD / launch| Hunar[Hunar Voice API]
+  Hunar -->|outbound call| Phone[Real phone network]
+  Phone -->|HMAC-signed webhook| FastAPI
+  FastAPI -->|read/write| DB[(PostgreSQL / SQLite)]
+  FastAPI -->|search| Apollo[Apollo.io<br/>falls back to mock]
+  FastAPI -->|health + demo flag| Browser
+```
+
+Data flow: the recruiter creates an agent, attaches it to a campaign, uploads candidates, hits Launch → FastAPI calls Hunar → Hunar dials the candidates → on completion Hunar posts a signed webhook back → FastAPI updates the local DB → the dashboard reflects the new structured result on next render.
 
 ## Project Structure
 
@@ -70,6 +89,7 @@ UI: http://localhost:3000
 | HUNAR_WEBHOOK_SECRET | For prod | HMAC secret for webhook validation |
 | FRONTEND_URL | For CORS | Default: http://localhost:3000 |
 | HUNAR_WEBHOOK_URL | For prod | Public HTTPS URL where Hunar delivers webhooks |
+| ADMIN_TOKEN | For demo re-seed | Shared secret for `POST /api/admin/seed-demo`. If unset, the endpoint returns 503. |
 
 See `.env.example` for the full template.
 
@@ -96,12 +116,13 @@ See `.env.example` for the full template.
 | GET | /api/calls/{call_id}/result | Proxy the structured call result |
 | GET | /api/settings/ | Runtime configuration & integration health |
 | POST | /webhooks/hunar | Hunar webhook receiver |
+| POST | /api/admin/seed-demo | Idempotent demo re-seed. Requires `X-Admin-Token` header. |
 
 ## Demo / Live mode
 
 The app ships with two evaluation paths so a reviewer can click through a fully populated UI even without live API keys:
 
-- **Demo mode** — Run `python backend/scripts/seed_demo_data.py` to populate 4 agents, 3 campaigns, 128 candidates, and 94 synthetic completed-call results (31 qualified, 47 interested) — no live Hunar or Apollo API call required. The script is idempotent (skips work if a `Demo Recruiter Agent` already exists) and writes directly to the local DB.
+- **Demo mode** — Run `python backend/scripts/seed_demo_data.py` to populate 4 agents, 3 campaigns, 128 candidates, and 94 synthetic completed-call results (~31 qualified, ~33–47 interested depending on the run's random sampling) — no live Hunar or Apollo API call required. The script is idempotent (skips work if a `Demo Recruiter Agent` already exists) and writes directly to the local DB.
 - **Live mode** — With `HUNAR_API_KEY` and `APOLLO_API_KEY` set, every action reaches the real Hunar Voice API and Apollo.io. Webhook callbacks update candidates in real time. The legacy `backend/scripts/seed_test_data.py` exercises the real `/api/agents/`, `/api/campaigns/`, `/api/candidates/bulk`, and `/api/campaigns/{id}/launch` endpoints end-to-end (requires a valid `HUNAR_API_KEY`).
 
 Apollo's `/api/people/search` endpoint also falls back to a curated mock dataset when no `APOLLO_API_KEY` is configured, so People Search always has results to display. The dashboard surfaces a "Demo Environment" badge when the demo seed has been run.
@@ -112,7 +133,7 @@ Apollo's `/api/people/search` endpoint also falls back to a curated mock dataset
 - Webhook signature validation via HMAC-SHA256
 - CORS restricted to known frontend origins (Vercel preview regex + explicit localhost)
 - `/api/settings/` never returns secret values — only presence + masked prefix; each field is independently try/except'd so one failure can't 500 the whole endpoint
-- Temporary `/api/_debug/settings` endpoint exposes full traceback for one specific Railway incident — safe to remove once the bug is confirmed fixed
+- `/api/admin/*` endpoints require an `X-Admin-Token` header and return 503 (not 401) when the server-side `ADMIN_TOKEN` is unset — no backdoor, no default token
 - No sensitive data in source code or commits
 
 ## License

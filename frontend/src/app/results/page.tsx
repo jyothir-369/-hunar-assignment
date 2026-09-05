@@ -240,6 +240,11 @@ export default function ResultsPage() {
                             rel="noopener noreferrer"
                           >
                             <Play className="mr-2 h-4 w-4" /> Play recording
+                            {c.recording_url.includes("hunar.example") && (
+                              <span className="ml-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+                                demo
+                              </span>
+                            )}
                           </a>
                         </Button>
                       )}
