@@ -1,9 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CheckCircle2, KeyRound, RefreshCcw, Settings, XCircle } from "lucide-react";
+import { toast } from "sonner";
+import {
+  CheckCircle2,
+  KeyRound,
+  RefreshCcw,
+  Settings,
+  Sparkles,
+  XCircle,
+} from "lucide-react";
 
-import { settingsApi, type RuntimeSettings } from "@/lib/api";
+import { adminApi, settingsApi, type RuntimeSettings } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,6 +27,7 @@ export default function SettingsPage() {
   const [settings, setSettings] = useState<RuntimeSettings | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [reseeding, setReseeding] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -37,6 +46,59 @@ export default function SettingsPage() {
     load();
   }, []);
 
+  // Pull the admin token from the build-time env, or prompt once per session
+  // if it's not set (so a deployed Vercel preview can still trigger a
+  // re-seed from the browser). Stored in localStorage to survive reloads.
+  const getAdminToken = (): string | null => {
+    if (typeof window === "undefined") return null;
+    const fromEnv = process.env.NEXT_PUBLIC_ADMIN_TOKEN;
+    if (fromEnv) return fromEnv;
+    return window.localStorage.getItem("hunar_admin_token");
+  };
+
+  const askForToken = (): string | null => {
+    if (typeof window === "undefined") return null;
+    const existing = window.localStorage.getItem("hunar_admin_token");
+    const input = window.prompt(
+      existing
+        ? "Admin token (leave blank to keep saved value)"
+        : "Enter the ADMIN_TOKEN configured on the backend.",
+      existing ?? "",
+    );
+    if (input === null) return null;
+    if (input.trim().length === 0) return existing ?? null;
+    window.localStorage.setItem("hunar_admin_token", input.trim());
+    return input.trim();
+  };
+
+  const handleReseed = async () => {
+    let token = getAdminToken();
+    if (!token) {
+      token = askForToken();
+      if (!token) {
+        toast.error("Re-seed cancelled — token required.");
+        return;
+      }
+    }
+    setReseeding(true);
+    try {
+      const result = await adminApi.seedDemo(token);
+      toast.success("Demo data seeded successfully", {
+        description: "Reload the page to see updated counts.",
+      });
+      // Refresh the settings panel so the "Demo Environment" indicator
+      // remains accurate (it should still be true after a re-seed).
+      await load();
+      // eslint-disable-next-line no-console
+      console.debug("seed_demo_data output:", result.stdout);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Re-seed failed";
+      toast.error("Could not re-seed demo data", { description: msg });
+    } finally {
+      setReseeding(false);
+    }
+  };
+
   const allOk = Boolean(
     settings &&
       settings.database.ok &&
@@ -49,6 +111,8 @@ export default function SettingsPage() {
       (settings.integrations.hunar.configured ||
         settings.integrations.apollo.configured),
   );
+
+  const isDemoSeeded = Boolean(settings?.demo?.seeded);
 
   return (
     <div className="space-y-6">
@@ -211,6 +275,41 @@ export default function SettingsPage() {
               <Row label="Process ID" value={String(settings.host.pid)} mono />
             </CardContent>
           </Card>
+
+          {isDemoSeeded && (
+            <Card className="border-amber-200 bg-amber-50">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-amber-900">
+                  <Sparkles className="h-4 w-4" /> Demo data is active
+                </CardTitle>
+                <CardDescription className="text-amber-800">
+                  The database contains the seeded{' '}
+                  <span className="font-mono">Demo Recruiter Agent</span> marker
+                  and 128 synthetic candidates / 94 completed call results.
+                  Re-seeding is safe — it short-circuits if the marker is
+                  already present, so this is mostly useful after a destructive
+                  edit.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="outline"
+                  onClick={handleReseed}
+                  disabled={reseeding}
+                  className="border-amber-300 bg-white text-amber-900 hover:bg-amber-100"
+                >
+                  <RefreshCcw
+                    className={`mr-2 h-4 w-4 ${reseeding ? "animate-spin" : ""}`}
+                  />
+                  {reseeding ? "Re-seeding…" : "Re-seed demo data"}
+                </Button>
+                <span className="text-xs text-amber-800">
+                  Requires <code className="font-mono">ADMIN_TOKEN</code> on the
+                  backend. Token is remembered per-browser only.
+                </span>
+              </CardContent>
+            </Card>
+          )}
         </>
       ) : null}
     </div>

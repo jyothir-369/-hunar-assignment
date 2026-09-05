@@ -181,6 +181,28 @@ export const settingsApi = {
   get: () => api.get<RuntimeSettings>("/api/settings/").then((r) => r.data),
 };
 
+// ─── ADMIN (demo data) ──────────────────────────────────
+
+export interface SeedDemoResponse {
+  ok: boolean;
+  stdout: string;
+  stderr: string;
+}
+
+export const adminApi = {
+  // Caller supplies the ADMIN_TOKEN (read from process.env.NEXT_PUBLIC_ADMIN_TOKEN
+  // or pasted into a Settings input). The backend rejects this with 503 if
+  // the env var is unset, so a missing token never falls back to "open".
+  seedDemo: (token: string) =>
+    api
+      .post<SeedDemoResponse>(
+        "/api/admin/seed-demo",
+        {},
+        { headers: { "X-Admin-Token": token } },
+      )
+      .then((r) => r.data),
+};
+
 // ─── CALLS (Hunar proxy) ─────────────────────────────────
 
 export interface HunarCallResult {
