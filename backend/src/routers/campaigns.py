@@ -1,5 +1,6 @@
 """Campaign endpoints — grouping agents and candidates, and launching bulk calls."""
 
+import logging
 from collections import defaultdict
 from typing import Any, Optional
 
@@ -21,6 +22,8 @@ from src.schemas.campaign import (
     CampaignUpdate,
 )
 from src.services.hunar_client import HunarAPIError, HunarClient
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/campaigns", tags=["Campaigns"])
 
@@ -317,7 +320,22 @@ def launch_campaign(
     else:
         hunar_calls = hunar_response or []
 
-    for candidate, call in zip(candidates, hunar_calls):
+    # Hunar may legitimately return fewer rows than we sent (it drops
+    # duplicates/invalid rows when remove_invalid_rows /
+    # remove_duplicate_phone_numbers are enabled). Only mark the candidates we
+    # actually got call objects for; log loudly if the counts diverge so the
+    # desync is visible instead of silent.
+    matched = min(len(candidates), len(hunar_calls))
+    if matched < len(candidates):
+        logger.warning(
+            "Hunar returned %d call objects for %d candidates in campaign %s — "
+            "%d candidate(s) left PENDING",
+            len(hunar_calls),
+            len(candidates),
+            campaign_id,
+            len(candidates) - matched,
+        )
+    for candidate, call in zip(candidates[:matched], hunar_calls[:matched]):
         if isinstance(call, dict):
             candidate.hunar_call_id = call.get("id")
         candidate.status = "INITIATED"

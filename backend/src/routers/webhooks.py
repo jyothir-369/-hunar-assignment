@@ -29,9 +29,18 @@ def _find_candidate(
         if candidate:
             return candidate
     if request_id:
-        candidate = db.execute(
-            select(Candidate).where(Candidate.request_id == request_id)
-        ).scalar_one_or_none()
+        # Many candidates can share one request_id (campaign launch stamps
+        # ``campaign-{id}`` on every row), so use .first() — scalar_one_or_none()
+        # would raise MultipleResultsFound and 500 the webhook.
+        candidate = (
+            db.execute(
+                select(Candidate)
+                .where(Candidate.request_id == request_id)
+                .order_by(Candidate.created_at)
+            )
+            .scalars()
+            .first()
+        )
         if candidate:
             return candidate
     return None

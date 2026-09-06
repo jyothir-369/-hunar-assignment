@@ -46,6 +46,8 @@ export default function DashboardPage() {
   });
   const [loading, setLoading] = useState(true);
   const [demoSeeded, setDemoSeeded] = useState(false);
+  // null = still checking, true = core stats loaded, false = load failed
+  const [connected, setConnected] = useState<boolean | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -71,9 +73,11 @@ export default function DashboardPage() {
             completed,
           });
           setDemoSeeded(Boolean(settings?.demo?.seeded));
+          setConnected(true);
         }
       } catch (err) {
         console.error("Failed to load dashboard stats", err);
+        if (!cancelled) setConnected(false);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -207,7 +211,14 @@ export default function DashboardPage() {
             </p>
             <div className="flex items-center gap-2 pt-2">
               <PhoneCall className="h-4 w-4 text-primary" />
-              <span>Live status: {loading ? "..." : "Connected to backend"}</span>
+              <span>
+                Live status:{" "}
+                {loading || connected === null
+                  ? "Checking…"
+                  : connected
+                    ? "Connected to backend"
+                    : "Backend unreachable"}
+              </span>
             </div>
           </CardContent>
         </Card>
