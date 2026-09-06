@@ -33,6 +33,14 @@ class CampaignLaunch(BaseModel):
 
 
 class CampaignStats(BaseModel):
+    """Per-campaign call status breakdown.
+
+    Always populated. Endpoints attach a CampaignStats instance to the ORM
+    Campaign before serializing; the ``default_factory`` below guarantees the
+    JSON shape includes a (possibly empty) ``stats`` object even if an
+    endpoint forgets to attach one.
+    """
+
     total: int = 0
     pending: int = 0
     initiated: int = 0
@@ -55,7 +63,10 @@ class CampaignResponse(BaseModel):
     timezone: str
     status: str
     total_candidates: int
-    stats: Optional[CampaignStats] = None
+    # Required, never null. Endpoints MUST attach a CampaignStats to the ORM
+    # Campaign before serializing; default_factory only kicks in if an
+    # endpoint forgets, ensuring the dashboard reduce never reads ``undefined``.
+    stats: CampaignStats = Field(default_factory=CampaignStats)
     created_at: datetime
     updated_at: datetime
 

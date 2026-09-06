@@ -87,35 +87,88 @@ def _snap_hours(hours: float) -> int:
     return _HUNAR_VALID_HOURS[-1]
 
 
+# Status bucket names that ``CampaignStats`` exposes. Kept as a constant so a
+# typo in either the SQL aggregation or the bucket counter fails immediately
+# rather than silently producing 0 in the dashboard.
+_STATUS_KEYS: tuple[str, ...] = (
+    "pending",
+    "initiated",
+    "in_progress",
+    "completed",
+    "not_connected",
+    "failed",
+)
+
+
 def _stats_from_statuses(statuses: list[str]) -> CampaignStats:
     """Build a CampaignStats from a flat list of candidate status strings.
 
-    Used by the list endpoint, which only needs status values to compute the
-    tile counts. Avoids materializing full Candidate rows.
+    Both the list endpoint and the detail endpoint reduce to this helper, so
+    the dashboard tile, the campaign detail panel, and any other consumer
+    always see identical numbers.
     """
+    bucket: dict[str, int] = {key: 0 for key in _STATUS_KEYS}
+    for s in statuses:
+        if s == "PENDING":
+            bucket["pending"] += 1
+        elif s == "INITIATED":
+            bucket["initiated"] += 1
+        elif s == "IN_PROGRESS":
+            bucket["in_progress"] += 1
+        elif s == "COMPLETED":
+            bucket["completed"] += 1
+        elif s == "NOT_CONNECTED":
+            bucket["not_connected"] += 1
+        elif s in ("FAILED", "CANCELLED"):
+            bucket["failed"] += 1
     return CampaignStats(
         total=len(statuses),
-        pending=sum(1 for s in statuses if s == "PENDING"),
-        initiated=sum(1 for s in statuses if s == "INITIATED"),
-        in_progress=sum(1 for s in statuses if s == "IN_PROGRESS"),
-        completed=sum(1 for s in statuses if s == "COMPLETED"),
-        not_connected=sum(1 for s in statuses if s == "NOT_CONNECTED"),
-        failed=sum(1 for s in statuses if s in ("FAILED", "CANCELLED")),
+        pending=bucket["pending"],
+        initiated=bucket["initiated"],
+        in_progress=bucket["in_progress"],
+        completed=bucket["completed"],
+        not_connected=bucket["not_connected"],
+        failed=bucket["failed"],
     )
 
 
-def _compute_stats(candidates: list[Candidate]) -> CampaignStats:
-    return _stats_from_statuses([c.status for c in candidates])
+def _fetch_statuses_for_campaign(
+    db: Session, campaign_id: str
+) -> list[str]:
+    """Return the candidate statuses for one campaign as a flat list.
+
+    Used by the detail endpoint. The list endpoint uses the batched
+    ``_attach_stats`` instead, which issues a single query for all visible
+    campaigns.
+    """
+    return list(
+        db.execute(
+            select(Candidate.status).where(Candidate.campaign_id == campaign_id)
+        )
+        .scalars()
+        .all()
+    )
+
+
+def _stats_for_campaign(db: Session, campaign_id: str) -> CampaignStats:
+    """Compute stats for a single campaign.
+
+    Single source of truth used by the detail endpoint. Returns a zero-filled
+    CampaignStats (total=0) when the campaign has no candidates, instead of
+    ``None``.
+    """
+    return _stats_from_statuses(_fetch_statuses_for_campaign(db, campaign_id))
 
 
 def _attach_stats(
     db: Session, campaigns: list[Campaign]
 ) -> None:
-    """Compute and attach per-campaign stats in a single query.
+    """Compute and attach per-campaign stats in a single batched query.
 
     The dashboard's "Calls Completed" tile and the campaign list response rely
-    on each campaign carrying a ``stats`` object. Without this, list responses
-    serialize ``stats: null`` and the dashboard reduce always returns 0.
+    on each campaign carrying a populated ``stats`` object. Without this,
+    list responses would serialize ``stats`` as an empty (but non-null)
+    default and the dashboard reduce would always return 0.
     """
     if not campaigns:
         return
@@ -129,8 +182,8 @@ def _attach_stats(
         .all()
     )
     buckets: dict[str, list[str]] = defaultdict(list)
-    for campaign_id, status in rows:
-        buckets[campaign_id].append(status)
+    for campaign_id, statu in rows:
+        buckets[campaign_id].append(statu)
     for campaign in campaigns:
         campaign.stats = _stats_from_statuses(  # type: ignore[attr-defined]
             buckets.get(campaign.id, [])
@@ -179,6 +232,10 @@ def create_campaign(
     db.add(campaign)
     db.commit()
     db.refresh(campaign)
+    # New campaign has no candidates; attach an empty stats object so the
+    # schema (now non-optional) serializes a real nested object instead of
+    # falling back to the zero default.
+    campaign.stats = CampaignStats()  # type: ignore[attr-defined]
     return campaign
 
 
@@ -188,14 +245,7 @@ def get_campaign(campaign_id: str, db: Session = Depends(get_db)) -> Campaign:
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
 
-    candidates = list(
-        db.execute(
-            select(Candidate).where(Candidate.campaign_id == campaign_id)
-        )
-        .scalars()
-        .all()
-    )
-    campaign.stats = _compute_stats(candidates)  # type: ignore[attr-defined]
+    campaign.stats = _stats_for_campaign(db, campaign_id)  # type: ignore[attr-defined]
     return campaign
 
 
@@ -278,12 +328,7 @@ def launch_campaign(
     db.commit()
     db.refresh(campaign)
 
-    candidates_all = list(
-        db.execute(select(Candidate).where(Candidate.campaign_id == campaign_id))
-        .scalars()
-        .all()
-    )
-    campaign.stats = _compute_stats(candidates_all)  # type: ignore[attr-defined]
+    campaign.stats = _stats_for_campaign(db, campaign_id)  # type: ignore[attr-defined]
     return campaign
 
 
@@ -302,4 +347,5 @@ def update_campaign(
 
     db.commit()
     db.refresh(campaign)
+    campaign.stats = _stats_for_campaign(db, campaign_id)  # type: ignore[attr-defined]
     return campaign
