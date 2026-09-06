@@ -26,15 +26,20 @@ router = APIRouter(prefix="/api/candidates", tags=["Candidates"])
 def list_candidates(
     campaign_id: Optional[str] = None,
     candidate_status: Optional[str] = None,
+    status: Optional[str] = None,
     page: int = 1,
     page_size: int = 20,
     db: Session = Depends(get_db),
 ) -> CandidateListResponse:
+    # Accept both `status` (frontend Results page) and `candidate_status`
+    # (internal convention) so a typo on one side doesn't silently disable
+    # the filter and return the full list as if "All" was selected.
+    effective_status = candidate_status or status
     stmt = select(Candidate)
     if campaign_id:
         stmt = stmt.where(Candidate.campaign_id == campaign_id)
-    if candidate_status:
-        stmt = stmt.where(Candidate.status == candidate_status)
+    if effective_status:
+        stmt = stmt.where(Candidate.status == effective_status)
 
     total = len(db.execute(stmt).scalars().all())
     rows = (

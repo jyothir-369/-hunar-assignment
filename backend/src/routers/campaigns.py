@@ -1,5 +1,6 @@
 """Campaign endpoints — grouping agents and candidates, and launching bulk calls."""
 
+from collections import defaultdict
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -86,16 +87,54 @@ def _snap_hours(hours: float) -> int:
     return _HUNAR_VALID_HOURS[-1]
 
 
-def _compute_stats(candidates: list[Candidate]) -> CampaignStats:
+def _stats_from_statuses(statuses: list[str]) -> CampaignStats:
+    """Build a CampaignStats from a flat list of candidate status strings.
+
+    Used by the list endpoint, which only needs status values to compute the
+    tile counts. Avoids materializing full Candidate rows.
+    """
     return CampaignStats(
-        total=len(candidates),
-        pending=sum(1 for c in candidates if c.status == "PENDING"),
-        initiated=sum(1 for c in candidates if c.status == "INITIATED"),
-        in_progress=sum(1 for c in candidates if c.status == "IN_PROGRESS"),
-        completed=sum(1 for c in candidates if c.status == "COMPLETED"),
-        not_connected=sum(1 for c in candidates if c.status == "NOT_CONNECTED"),
-        failed=sum(1 for c in candidates if c.status in ("FAILED", "CANCELLED")),
+        total=len(statuses),
+        pending=sum(1 for s in statuses if s == "PENDING"),
+        initiated=sum(1 for s in statuses if s == "INITIATED"),
+        in_progress=sum(1 for s in statuses if s == "IN_PROGRESS"),
+        completed=sum(1 for s in statuses if s == "COMPLETED"),
+        not_connected=sum(1 for s in statuses if s == "NOT_CONNECTED"),
+        failed=sum(1 for s in statuses if s in ("FAILED", "CANCELLED")),
     )
+
+
+def _compute_stats(candidates: list[Candidate]) -> CampaignStats:
+    return _stats_from_statuses([c.status for c in candidates])
+
+
+def _attach_stats(
+    db: Session, campaigns: list[Campaign]
+) -> None:
+    """Compute and attach per-campaign stats in a single query.
+
+    The dashboard's "Calls Completed" tile and the campaign list response rely
+    on each campaign carrying a ``stats`` object. Without this, list responses
+    serialize ``stats: null`` and the dashboard reduce always returns 0.
+    """
+    if not campaigns:
+        return
+    campaign_ids = [c.id for c in campaigns]
+    rows = (
+        db.execute(
+            select(Candidate.campaign_id, Candidate.status).where(
+                Candidate.campaign_id.in_(campaign_ids)
+            )
+        )
+        .all()
+    )
+    buckets: dict[str, list[str]] = defaultdict(list)
+    for campaign_id, status in rows:
+        buckets[campaign_id].append(status)
+    for campaign in campaigns:
+        campaign.stats = _stats_from_statuses(  # type: ignore[attr-defined]
+            buckets.get(campaign.id, [])
+        )
 
 
 @router.get("/", response_model=CampaignListResponse)
@@ -115,6 +154,7 @@ def list_campaigns(
         .scalars()
         .all()
     )
+    _attach_stats(db, rows)
     return CampaignListResponse(count=total, results=rows)
 
 
